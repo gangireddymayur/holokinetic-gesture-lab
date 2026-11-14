@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
+import { HandTracker } from '../lib/handTracker.js';
 import {
   Sparkles,
   Zap,
@@ -146,6 +147,7 @@ export default function HoloKineticLab({ onSwitchMode }) {
   const [muted, setMuted] = useState(false);
   const [bouncesCount, setBouncesCount] = useState(0);
   const [interactionStatus, setInteractionStatus] = useState('Bring your hand near the shape to CATCH it!');
+  const [trackerStatus, setTrackerStatus] = useState({ fps: 0, quality: 'full', error: null });
 
   // Telemetry for Left & Right Hands
   const [leftHand, setLeftHand] = useState({ detected: false, pinching: false, x: 0, y: 0 });
@@ -189,10 +191,14 @@ export default function HoloKineticLab({ onSwitchMode }) {
     leftHandWorld: { x: 0, y: 0, active: false, pinching: false },
     rightHandWorld: { x: 0, y: 0, active: false, pinching: false },
     viewportWidth: 14,
-    viewportHeight: 9
+    viewportHeight: 9,
+    lastBounce: 0,
+    lastFrame: 0
   });
 
-  const isProcessingCamera = useRef(false);
+  const trackerRef = useRef(new HandTracker());
+  const shapeIdRef = useRef('basketball');
+  const lastHudUpdate = useRef(0);
 
   // Helper to build 3D geometry
   const createShapeMesh = (shapeId) => {
@@ -528,29 +534,61 @@ export default function HoloKineticLab({ onSwitchMode }) {
         }
       }
 
+      // Frame-rate independent: k is 1.0 at 60 FPS, so a 120 Hz display behaves the same.
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - (p.lastFrame || now)) / 1000);
+      p.lastFrame = now;
+      const k = dt * 60;
+
       if (mesh) {
-        // Free Flight Physics
+        // Carry: ease the object toward the hand(s) at render rate for smooth motion.
+        const ease = 1 - Math.exp(-dt * 28);
+        if (p.heldBy === 'left' && p.leftHandWorld.active) {
+          p.x += (p.leftHandWorld.x - p.x) * ease;
+          p.y += (p.leftHandWorld.y - p.y) * ease;
+        } else if (p.heldBy === 'right' && p.rightHandWorld.active) {
+          p.x += (p.rightHandWorld.x - p.x) * ease;
+          p.y += (p.rightHandWorld.y - p.y) * ease;
+        } else if (p.heldBy === 'both' && p.leftHandWorld.active && p.rightHandWorld.active) {
+          p.x += ((p.leftHandWorld.x + p.rightHandWorld.x) / 2 - p.x) * ease;
+          p.y += ((p.leftHandWorld.y + p.rightHandWorld.y) / 2 - p.y) * ease;
+        }
+
+        // Free flight physics
         if (!p.heldBy) {
-          p.x += p.vx;
-          p.y += p.vy;
-          p.z += p.vz;
+          p.x += p.vx * k;
+          p.y += p.vy * k;
+          p.z += p.vz * k;
 
-          p.vx *= 0.985;
-          p.vy *= 0.985;
+          const drag = Math.pow(0.985, k);
+          p.vx *= drag;
+          p.vy *= drag;
 
-          // Gentle gravity for basketball
-          if (selectedShapeId === 'basketball') {
-            p.vy -= 0.0025;
+          // Gentle gravity for the basketball (read from a ref, not a stale closure)
+          if (shapeIdRef.current === 'basketball') {
+            p.vy -= 0.0025 * k;
           }
 
-          // Wall Rebounds
-          if (p.x > boundX) { p.x = boundX; p.vx = -p.vx * 0.85; audio.playBounce(); triggerSparks(p.x, p.y, p.z); }
-          if (p.x < -boundX) { p.x = -boundX; p.vx = -p.vx * 0.85; audio.playBounce(); triggerSparks(p.x, p.y, p.z); }
-          if (p.y > boundY) { p.y = boundY; p.vy = -p.vy * 0.85; audio.playBounce(); triggerSparks(p.x, p.y, p.z); }
-          if (p.y < -boundY) { p.y = -boundY; p.vy = -p.vy * 0.85; audio.playBounce(); triggerSparks(p.x, p.y, p.z); }
+          // Wall rebounds: only when moving into the wall, with a short cooldown
+          const hitWall = () => {
+            if (now - p.lastBounce > 120) {
+              p.lastBounce = now;
+              audio.playBounce();
+              triggerSparks(p.x, p.y, p.z);
+            }
+          };
+          if (p.x > boundX) { p.x = boundX; if (p.vx > 0) { p.vx = -p.vx * 0.85; hitWall(); } }
+          if (p.x < -boundX) { p.x = -boundX; if (p.vx < 0) { p.vx = -p.vx * 0.85; hitWall(); } }
+          if (p.y > boundY) { p.y = boundY; if (p.vy > 0) { p.vy = -p.vy * 0.85; hitWall(); } }
+          if (p.y < -boundY) { p.y = -boundY; if (p.vy < 0) { p.vy = -p.vy * 0.85; hitWall(); } }
 
-          p.rotX += 0.01;
-          p.rotY += 0.015;
+          // Once the object has settled it becomes catchable by an open hand again.
+          if (p.isInFlight && Math.hypot(p.vx, p.vy) < 0.012) {
+            p.isInFlight = false;
+          }
+
+          p.rotX += 0.01 * k;
+          p.rotY += 0.015 * k;
         }
 
         mesh.position.set(p.x, p.y, p.z);
@@ -574,6 +612,7 @@ export default function HoloKineticLab({ onSwitchMode }) {
 
   // Update Model on Selection
   useEffect(() => {
+    shapeIdRef.current = selectedShapeId;
     if (!sceneRef.current) return;
     if (activeMeshGroup.current) {
       sceneRef.current.remove(activeMeshGroup.current);
@@ -594,295 +633,262 @@ export default function HoloKineticLab({ onSwitchMode }) {
     audio.playCatch();
   }, [selectedShapeId]);
 
-  // Dual-Hand MediaPipe Hands Tracking Loop
+  // Dual-hand MediaPipe tracking. Frames are pulled from our own camera stream,
+  // synced to the video, and passed through HandTracker for stable hand state.
   useEffect(() => {
+    const tracker = trackerRef.current;
+    const video = webcamRef.current;
     let hands = null;
-    let camera = null;
+    let stream = null;
     let isCancelled = false;
+    let waitTimer = 0;
+    let frameHandle = 0;
+    let complexity = 1;
+    let sending = false;
+    let procMs = 0;
+    let frames = 0;
+    let fpsStart = performance.now();
+    const startedAt = performance.now();
 
-    const setupHands = async () => {
-      const HandsClass = window.Hands;
-      const CameraClass = window.Camera;
-      if (!HandsClass || !CameraClass) {
-        setTimeout(setupHands, 250);
-        return;
-      }
+    const clampV = (v) => Math.max(-0.6, Math.min(0.6, v / 60)); // units/s -> units per 60 Hz frame
+    const THROW_SPEED = 11; // world units per second
+    const CATCH_RADIUS = 2.6;
 
-      hands = new HandsClass({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-      });
+    const fail = (message) => {
+      if (isCancelled) return;
+      setTrackerStatus((s) => ({ ...s, error: message }));
+      setInteractionStatus(message);
+    };
 
-      hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-      });
-
-      hands.onResults((results) => {
-        if (isCancelled) return;
-
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        ctx.save();
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        let detectedLeft = null;
-        let detectedRight = null;
-        const p = physicsState.current;
-
-        if (results.multiHandLandmarks && results.multiHandedness) {
-          for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-            const landmarks = results.multiHandLandmarks[i];
-            const handedness = results.multiHandedness[i].label; // "Left" or "Right"
-            const isUserLeft = handedness === 'Right'; // Invert for mirrored camera
-
-            // Draw Skeleton on PIP canvas
-            if (window.drawConnectors && window.HAND_CONNECTIONS) {
-              window.drawConnectors(ctx, landmarks, window.HAND_CONNECTIONS, {
-                color: isUserLeft ? '#00f2fe' : '#d946ef',
-                lineWidth: 2
-              });
-            }
-
-            if (window.drawLandmarks) {
-              window.drawLandmarks(ctx, landmarks, {
-                color: '#ffffff',
-                lineWidth: 1,
-                radius: 2.5
-              });
-            }
-
-            // Draw Palm Repulsor Glow on Landmark 9 (Middle MCP)
-            const palmX = landmarks[9].x * canvas.width;
-            const palmY = landmarks[9].y * canvas.height;
-            ctx.beginPath();
-            ctx.arc(palmX, palmY, 12, 0, 2 * Math.PI);
-            ctx.strokeStyle = isUserLeft ? '#00f2fe' : '#d946ef';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            // Hand scale
-            const wrist = landmarks[0];
-            const middleMCP = landmarks[9];
-            const handScale = Math.max(0.08, Math.hypot(middleMCP.x - wrist.x, middleMCP.y - wrist.y));
-
-            // Pinch distance
-            const pinchDist = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y);
-            const isPinching = pinchDist / handScale < 0.42;
-
-            // EXACT Mathematical Projection into Three.js 3D Coordinates
-            const worldX = (0.5 - landmarks[9].x) * p.viewportWidth;
-            const worldY = (0.5 - landmarks[9].y) * p.viewportHeight;
-
-            const handData = {
-              worldX,
-              worldY,
-              isPinching,
-              active: true
-            };
-
-            if (isUserLeft) detectedLeft = handData;
-            else detectedRight = handData;
-          }
+    const drawOverlay = (left, right) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (const [hand, color] of [[left, '#00f2fe'], [right, '#d946ef']]) {
+        if (!hand || hand.stale) continue;
+        if (window.drawConnectors && window.HAND_CONNECTIONS) {
+          window.drawConnectors(ctx, hand.landmarks, window.HAND_CONNECTIONS, { color, lineWidth: 2 });
         }
-
-        // Store world positions for Three.js cursors
-        p.leftHandWorld = detectedLeft || { active: false, x: 0, y: 0 };
-        p.rightHandWorld = detectedRight || { active: false, x: 0, y: 0 };
-
-        setLeftHand({
-          detected: !!detectedLeft,
-          pinching: detectedLeft?.isPinching || false,
-          x: Math.round(detectedLeft?.worldX || 0),
-          y: Math.round(detectedLeft?.worldY || 0)
-        });
-
-        setRightHand({
-          detected: !!detectedRight,
-          pinching: detectedRight?.isPinching || false,
-          x: Math.round(detectedRight?.worldX || 0),
-          y: Math.round(detectedRight?.worldY || 0)
-        });
-
-        // ═════════════════════════════════════════════════════════════════════
-        // INTUITIVE CATCH & PASS KINETIC ENGINE (Fixed!)
-        // ═════════════════════════════════════════════════════════════════════
-
-        // Velocity tracking for throwing
-        if (detectedLeft) {
-          p.leftVelocity = {
-            x: (detectedLeft.worldX - p.lastLeftPos.x) * 0.6,
-            y: (detectedLeft.worldY - p.lastLeftPos.y) * 0.6
-          };
-          p.lastLeftPos = { x: detectedLeft.worldX, y: detectedLeft.worldY };
+        if (window.drawLandmarks) {
+          window.drawLandmarks(ctx, hand.landmarks, { color: '#ffffff', lineWidth: 1, radius: 2.5 });
         }
-        if (detectedRight) {
-          p.rightVelocity = {
-            x: (detectedRight.worldX - p.lastRightPos.x) * 0.6,
-            y: (detectedRight.worldY - p.lastRightPos.y) * 0.6
-          };
-          p.lastRightPos = { x: detectedRight.worldX, y: detectedRight.worldY };
-        }
-
-        const distLeft = detectedLeft ? Math.hypot(detectedLeft.worldX - p.x, detectedLeft.worldY - p.y) : 999;
-        const distRight = detectedRight ? Math.hypot(detectedRight.worldX - p.x, detectedRight.worldY - p.y) : 999;
-
-        // Catch Radius: Generous 2.6 units (Easy magnetic catch!)
-        const CATCH_RADIUS = 2.6;
-
-        // 1. TWO-HANDED HOLOGRAPHIC SCALING (Both hands grabbing)
-        if (detectedLeft && detectedRight && distLeft < 3.2 && distRight < 3.2) {
-          p.heldBy = 'both';
-          p.isInFlight = false;
-          setHeldByState('both');
-          setInteractionStatus('TWO-HANDED HOLD: Spread hands apart to expand, push to shrink!');
-
-          const handSpan = Math.hypot(detectedRight.worldX - detectedLeft.worldX, detectedRight.worldY - detectedLeft.worldY);
-          if (p.prevHandDist !== null) {
-            const scaleDelta = (handSpan - p.prevHandDist) * 0.45;
-            p.scale = Math.max(0.4, Math.min(3.5, p.scale + scaleDelta));
-            setHoloScale(parseFloat(p.scale.toFixed(2)));
-            if (Math.abs(scaleDelta) > 0.04) audio.playScale();
-          }
-          p.prevHandDist = handSpan;
-
-          // Centered between both hands
-          p.x = (detectedLeft.worldX + detectedRight.worldX) / 2;
-          p.y = (detectedLeft.worldY + detectedRight.worldY) / 2;
-          p.rotY = Math.atan2(detectedRight.worldY - detectedLeft.worldY, detectedRight.worldX - detectedLeft.worldX);
-        }
-        // 2. CATCH OR HOLD WITH LEFT HAND
-        else if (detectedLeft && (p.heldBy === 'left' || (!p.isInFlight && distLeft < CATCH_RADIUS))) {
-          if (p.heldBy !== 'left') {
-            audio.playCatch();
-            setInteractionStatus('MAGNETIC CATCH IN LEFT HAND! Move hand to carry, flick to throw.');
-          }
-          p.heldBy = 'left';
-          p.isInFlight = false;
-          p.prevHandDist = null;
-          setHeldByState('left');
-
-          // Smoothly snap to palm
-          p.x += (detectedLeft.worldX - p.x) * 0.45;
-          p.y += (detectedLeft.worldY - p.y) * 0.45;
-          p.vx = p.leftVelocity.x;
-          p.vy = p.leftVelocity.y;
-
-          // Throw detection: if hand makes a fast flick and opens
-          if (Math.hypot(p.leftVelocity.x, p.leftVelocity.y) > 0.3) {
-            p.heldBy = null;
-            p.isInFlight = true;
-            setHeldByState(null);
-            audio.playBounce();
-            setInteractionStatus('THROWN! Put your Right Hand in the way to CATCH!');
-          }
-        }
-        // 3. CATCH OR HOLD WITH RIGHT HAND
-        else if (detectedRight && (p.heldBy === 'right' || (!p.isInFlight && distRight < CATCH_RADIUS))) {
-          if (p.heldBy !== 'right') {
-            audio.playCatch();
-            setInteractionStatus('MAGNETIC CATCH IN RIGHT HAND! Move hand to carry, flick to throw.');
-          }
-          p.heldBy = 'right';
-          p.isInFlight = false;
-          p.prevHandDist = null;
-          setHeldByState('right');
-
-          p.x += (detectedRight.worldX - p.x) * 0.45;
-          p.y += (detectedRight.worldY - p.y) * 0.45;
-          p.vx = p.rightVelocity.x;
-          p.vy = p.rightVelocity.y;
-
-          // Throw detection
-          if (Math.hypot(p.rightVelocity.x, p.rightVelocity.y) > 0.3) {
-            p.heldBy = null;
-            p.isInFlight = true;
-            setHeldByState(null);
-            audio.playBounce();
-            setInteractionStatus('THROWN! Put your Left Hand in the way to CATCH!');
-          }
-        }
-        // 4. IN FLIGHT: CATCH OR BOUNCE BETWEEN HANDS
-        else {
-          p.prevHandDist = null;
-          if (p.heldBy) {
-            p.heldBy = null;
-            p.isInFlight = true;
-            setHeldByState(null);
-          }
-
-          // If in flight and approaches Left Hand: Catch or Bounce!
-          if (p.isInFlight && detectedLeft && distLeft < 1.8) {
-            if (detectedLeft.isPinching) {
-              p.heldBy = 'left';
-              p.isInFlight = false;
-              setHeldByState('left');
-              audio.playCatch();
-              setInteractionStatus('CAUGHT BY LEFT HAND!');
-            } else {
-              // Kinetic Bounce!
-              p.vx = Math.abs(p.vx) > 0.05 ? -p.vx * 1.05 : 0.22;
-              p.vy += (p.y - detectedLeft.worldY) * 0.25;
-              audio.playBounce();
-              triggerSparks(p.x, p.y, p.z);
-              setBouncesCount((b) => b + 1);
-              setInteractionStatus('BOUNCED OFF LEFT PALM! Heading to Right Hand!');
-            }
-          }
-
-          // If in flight and approaches Right Hand: Catch or Bounce!
-          if (p.isInFlight && detectedRight && distRight < 1.8) {
-            if (detectedRight.isPinching) {
-              p.heldBy = 'right';
-              p.isInFlight = false;
-              setHeldByState('right');
-              audio.playCatch();
-              setInteractionStatus('CAUGHT BY RIGHT HAND!');
-            } else {
-              // Kinetic Bounce!
-              p.vx = Math.abs(p.vx) > 0.05 ? -p.vx * 1.05 : -0.22;
-              p.vy += (p.y - detectedRight.worldY) * 0.25;
-              audio.playBounce();
-              triggerSparks(p.x, p.y, p.z);
-              setBouncesCount((b) => b + 1);
-              setInteractionStatus('BOUNCED OFF RIGHT PALM! Heading to Left Hand!');
-            }
-          }
-        }
-
-        ctx.restore();
-      });
-
-      if (webcamRef.current) {
-        camera = new CameraClass(webcamRef.current, {
-          onFrame: async () => {
-            if (isProcessingCamera.current) return;
-            isProcessingCamera.current = true;
-            try {
-              if (webcamRef.current && hands) {
-                await hands.send({ image: webcamRef.current });
-              }
-            } catch (err) {
-              console.error(err);
-            } finally {
-              isProcessingCamera.current = false;
-            }
-          },
-          width: 640,
-          height: 480
-        });
-        camera.start();
+        const palm = hand.landmarks[9];
+        ctx.beginPath();
+        ctx.arc(palm.x * canvas.width, palm.y * canvas.height, 12, 0, 2 * Math.PI);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
       }
     };
 
-    setupHands();
+    const handleResults = (results) => {
+      if (isCancelled) return;
+      const now = performance.now();
+      const p = physicsState.current;
+      tracker.setViewport(p.viewportWidth, p.viewportHeight);
+      const { left: L, right: R } = tracker.update(results, now);
+
+      drawOverlay(L, R);
+
+      // Positions for the Three.js hand cursors and carry easing
+      p.leftHandWorld = L ? { x: L.x, y: L.y, active: true, pinching: L.isPinching } : { x: 0, y: 0, active: false, pinching: false };
+      p.rightHandWorld = R ? { x: R.x, y: R.y, active: true, pinching: R.isPinching } : { x: 0, y: 0, active: false, pinching: false };
+
+      // HUD telemetry is throttled so React is not re-rendered every camera frame
+      if (now - lastHudUpdate.current > 100) {
+        lastHudUpdate.current = now;
+        setLeftHand({ detected: !!L, pinching: !!L?.isPinching, x: Math.round(L?.x ?? 0), y: Math.round(L?.y ?? 0) });
+        setRightHand({ detected: !!R, pinching: !!R?.isPinching, x: Math.round(R?.x ?? 0), y: Math.round(R?.y ?? 0) });
+      }
+
+      const distLeft = L ? Math.hypot(L.x - p.x, L.y - p.y) : 999;
+      const distRight = R ? Math.hypot(R.x - p.x, R.y - p.y) : 999;
+
+      const startThrow = (hand, otherName) => {
+        p.vx = clampV(hand.vx);
+        p.vy = clampV(hand.vy);
+        p.heldBy = null;
+        p.isInFlight = true;
+        setHeldByState(null);
+        audio.playBounce();
+        setInteractionStatus(`THROWN! Put your ${otherName} Hand in the way to CATCH!`);
+      };
+
+      const bounceOff = (hand, side) => {
+        if (now - p.lastBounce < 250) return;
+        p.lastBounce = now;
+        p.vx = Math.abs(p.vx) > 0.05 ? -p.vx * 1.05 : (side === 'left' ? 0.22 : -0.22);
+        p.vy += (p.y - hand.y) * 0.25;
+        audio.playBounce();
+        triggerSparks(p.x, p.y, p.z);
+        setBouncesCount((b) => b + 1);
+        setInteractionStatus(`BOUNCED OFF ${side.toUpperCase()} PALM! Heading to ${side === 'left' ? 'Right' : 'Left'} Hand!`);
+      };
+
+      // 1. Two-handed hold: spread to scale
+      if (L && R && distLeft < 3.2 && distRight < 3.2) {
+        if (p.heldBy !== 'both') setInteractionStatus('TWO-HANDED HOLD: Spread hands apart to expand, push to shrink!');
+        p.heldBy = 'both';
+        p.isInFlight = false;
+        setHeldByState('both');
+
+        const handSpan = Math.hypot(R.x - L.x, R.y - L.y);
+        if (p.prevHandDist !== null) {
+          const scaleDelta = (handSpan - p.prevHandDist) * 0.45;
+          p.scale = Math.max(0.4, Math.min(3.5, p.scale + scaleDelta));
+          setHoloScale(parseFloat(p.scale.toFixed(2)));
+          if (Math.abs(scaleDelta) > 0.04) audio.playScale();
+        }
+        p.prevHandDist = handSpan;
+        p.rotY = Math.atan2(R.y - L.y, R.x - L.x);
+      }
+      // 2. Catch or hold with the left hand
+      else if (L && (p.heldBy === 'left' || (!p.isInFlight && distLeft < CATCH_RADIUS))) {
+        if (p.heldBy !== 'left') {
+          audio.playCatch();
+          setInteractionStatus('MAGNETIC CATCH IN LEFT HAND! Move hand to carry, flick to throw.');
+        }
+        p.heldBy = 'left';
+        p.isInFlight = false;
+        p.prevHandDist = null;
+        setHeldByState('left');
+        if (!L.stale && L.speed > THROW_SPEED) startThrow(L, 'Right');
+      }
+      // 3. Catch or hold with the right hand
+      else if (R && (p.heldBy === 'right' || (!p.isInFlight && distRight < CATCH_RADIUS))) {
+        if (p.heldBy !== 'right') {
+          audio.playCatch();
+          setInteractionStatus('MAGNETIC CATCH IN RIGHT HAND! Move hand to carry, flick to throw.');
+        }
+        p.heldBy = 'right';
+        p.isInFlight = false;
+        p.prevHandDist = null;
+        setHeldByState('right');
+        if (!R.stale && R.speed > THROW_SPEED) startThrow(R, 'Left');
+      }
+      // 4. In flight: catch with a pinch or bounce off an open palm
+      else {
+        p.prevHandDist = null;
+        if (p.heldBy) {
+          p.heldBy = null;
+          p.isInFlight = true;
+          setHeldByState(null);
+        }
+        if (p.isInFlight && L && distLeft < 1.8) {
+          if (L.isPinching) {
+            p.heldBy = 'left';
+            p.isInFlight = false;
+            setHeldByState('left');
+            audio.playCatch();
+            setInteractionStatus('CAUGHT BY LEFT HAND!');
+          } else {
+            bounceOff(L, 'left');
+          }
+        }
+        if (p.isInFlight && R && distRight < 1.8) {
+          if (R.isPinching) {
+            p.heldBy = 'right';
+            p.isInFlight = false;
+            setHeldByState('right');
+            audio.playCatch();
+            setInteractionStatus('CAUGHT BY RIGHT HAND!');
+          } else {
+            bounceOff(R, 'right');
+          }
+        }
+      }
+    };
+
+    // Pull frames in sync with the video. Falls back to rAF where unsupported.
+    const schedule = () => {
+      if (isCancelled) return;
+      if (video.requestVideoFrameCallback) frameHandle = video.requestVideoFrameCallback(pump);
+      else frameHandle = requestAnimationFrame(pump);
+    };
+
+    const pump = async () => {
+      if (isCancelled) return;
+      if (!sending && video.readyState >= 2) {
+        sending = true;
+        const t0 = performance.now();
+        try {
+          await hands.send({ image: video });
+        } catch (err) {
+          console.error(err);
+        }
+        sending = false;
+        const t1 = performance.now();
+        procMs = procMs ? procMs * 0.9 + (t1 - t0) * 0.1 : t1 - t0;
+        frames += 1;
+        if (t1 - fpsStart >= 1000) {
+          const fps = Math.round((frames * 1000) / (t1 - fpsStart));
+          frames = 0;
+          fpsStart = t1;
+          // Adaptive quality: drop to the lite model if the full model cannot keep up.
+          if (complexity === 1 && procMs > 45 && fps < 22) {
+            complexity = 0;
+            hands.setOptions({ modelComplexity: 0 });
+          }
+          setTrackerStatus((st) => ({ ...st, fps, quality: complexity === 1 ? 'full' : 'lite' }));
+        }
+      }
+      schedule();
+    };
+
+    const start = async () => {
+      if (isCancelled) return;
+      if (!window.Hands) {
+        if (performance.now() - startedAt > 12000) {
+          fail('Hand tracking failed to load. Check your internet connection and reload.');
+          return;
+        }
+        waitTimer = setTimeout(start, 250);
+        return;
+      }
+
+      hands = new window.Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: complexity,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      hands.onResults(handleResults);
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user', frameRate: { ideal: 60 } },
+          audio: false
+        });
+      } catch (err) {
+        fail(err?.name === 'NotAllowedError'
+          ? 'Camera permission denied. Allow camera access and reload.'
+          : 'Could not open the camera.');
+        return;
+      }
+      if (isCancelled) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      video.srcObject = stream;
+      await video.play().catch(() => {});
+      schedule();
+    };
+
+    start();
 
     return () => {
       isCancelled = true;
-      if (camera) camera.stop();
+      clearTimeout(waitTimer);
+      if (video?.cancelVideoFrameCallback) video.cancelVideoFrameCallback(frameHandle);
+      else cancelAnimationFrame(frameHandle);
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      if (video) video.srcObject = null;
       if (hands) hands.close();
+      tracker.reset();
     };
   }, []);
 
@@ -1055,7 +1061,9 @@ export default function HoloKineticLab({ onSwitchMode }) {
         <div className="camera-window-header-stark">
           <span className="camera-title-stark">STARK TRACKING HUD</span>
           <span style={{ fontSize: '10px', color: '#10b981', fontFamily: 'JetBrains Mono' }}>
-            {leftHand.detected && rightHand.detected ? '2 HANDS' : leftHand.detected || rightHand.detected ? '1 HAND' : 'SEARCHING'}
+            {trackerStatus.error
+              ? 'NO CAMERA'
+              : `${leftHand.detected && rightHand.detected ? '2 HANDS' : leftHand.detected || rightHand.detected ? '1 HAND' : 'SEARCHING'} · ${trackerStatus.fps} FPS${trackerStatus.quality === 'lite' ? ' · LITE' : ''}`}
           </span>
         </div>
         <div className="camera-webcam-preview">

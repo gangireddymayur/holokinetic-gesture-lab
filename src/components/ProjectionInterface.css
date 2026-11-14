@@ -86,8 +86,9 @@
   left: 24px;
   right: 24px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 16px;
   z-index: 40;
   transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -156,7 +157,10 @@
 .header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
 }
 
 .icon-btn {
@@ -649,4 +653,15 @@
 .landmark-card span {
   color: #00f2fe;
   font-weight: 600;
+}
+
+/* Interaction polish */
+.icon-btn:active { transform: translateY(0) scale(0.97); }
+.icon-btn:focus-visible { outline: 2px solid #00f2fe; outline-offset: 2px; }
+.icon-btn { white-space: nowrap; }
+.brand-badge { flex-shrink: 0; }
+
+@media (max-width: 900px) {
+  .icon-btn span { display: none; }
+  .icon-btn { padding: 8px 10px; }
 }

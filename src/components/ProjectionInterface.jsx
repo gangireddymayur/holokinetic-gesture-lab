@@ -19,7 +19,8 @@ import {
   Video as VideoIcon,
   Sun,
   Flame,
-  Layers
+  Layers,
+  Box
 } from 'lucide-react';
 import './ProjectionInterface.css';
 
@@ -61,7 +62,7 @@ const PRESET_VIDEOS = [
   }
 ];
 
-export default function ProjectionInterface() {
+export default function ProjectionInterface({ onSwitchMode }) {
   const [selectedVideo, setSelectedVideo] = useState(PRESET_VIDEOS[0].src);
   const [videoTitle, setVideoTitle] = useState(PRESET_VIDEOS[0].name);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -623,7 +624,7 @@ export default function ProjectionInterface() {
         <div className="brand-badge">
           <span className={`pulse-dot ${handDetected ? '' : 'inactive'}`} />
           <h1 className="brand-title">ChronoGrip</h1>
-          <span className="brand-tag">MacBook XDR • 120Hz</span>
+          <span className="brand-tag">Gesture Time Scrubber</span>
         </div>
 
         <div className="header-actions">
@@ -693,6 +694,18 @@ export default function ProjectionInterface() {
             accept="video/*"
             style={{ display: 'none' }}
           />
+
+          {/* Switch to the 3D physics lab */}
+          {onSwitchMode && (
+            <button
+              className="icon-btn"
+              onClick={onSwitchMode}
+              title="Switch to HoloKinetic Lab"
+            >
+              <Box size={15} />
+              <span>HoloKinetic Lab</span>
+            </button>
+          )}
 
           {/* Hide Controls Button */}
           <button
