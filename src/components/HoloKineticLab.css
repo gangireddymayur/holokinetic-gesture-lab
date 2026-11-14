@@ -1,0 +1,412 @@
+/* HoloKineticLab.css — Tony Stark Holographic HUD & 3D Physics */
+
+.holokinetic-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: #05070d;
+  overflow: hidden;
+  font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #e2e8f0;
+  user-select: none;
+}
+
+/* 3D WebGL Canvas */
+.three-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  display: block;
+}
+
+/* Background AR Video Feed (Optional Camera Underlay) */
+.camera-ar-underlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  opacity: 0.22;
+  filter: contrast(1.2) brightness(0.6) saturate(1.4);
+  z-index: 5;
+  transition: opacity 0.4s ease;
+}
+
+.camera-ar-underlay.hidden {
+  opacity: 0;
+}
+
+/* Ambient Holographic Grid & Gridlines */
+.holo-grid-plane {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: 
+    linear-gradient(rgba(0, 242, 254, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 242, 254, 0.05) 1px, transparent 1px);
+  background-size: 50px 50px;
+  perspective: 600px;
+  z-index: 6;
+}
+
+.vignette-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at center, transparent 35%, rgba(4, 6, 12, 0.85) 100%);
+  z-index: 7;
+}
+
+/* STARK HUD HEADER */
+.stark-hud-header {
+  position: absolute;
+  top: 18px;
+  left: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.hud-title-cluster {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 18px;
+  background: rgba(8, 12, 24, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  border-radius: 9999px;
+  box-shadow: 0 0 25px rgba(0, 242, 254, 0.2), inset 0 0 15px rgba(0, 242, 254, 0.1);
+}
+
+.arc-reactor-core {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #00f2fe;
+  box-shadow: 0 0 12px #00f2fe, 0 0 24px #00f2fe;
+  animation: arcPulse 2s infinite ease-in-out;
+}
+
+@keyframes arcPulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.85; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
+
+.hud-main-title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  background: linear-gradient(135deg, #ffffff 0%, #00f2fe 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hud-version-pill {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(0, 242, 254, 0.15);
+  color: #00f2fe;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 242, 254, 0.35);
+}
+
+.hud-actions {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hud-btn {
+  background: rgba(8, 12, 22, 0.85);
+  border: 1px solid rgba(0, 242, 254, 0.25);
+  color: #cbd5e1;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(16px);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hud-btn:hover {
+  background: rgba(14, 22, 42, 0.95);
+  border-color: #00f2fe;
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 0 16px rgba(0, 242, 254, 0.3);
+}
+
+.hud-btn.active {
+  background: linear-gradient(135deg, rgba(0, 242, 254, 0.3), rgba(99, 102, 241, 0.3));
+  border-color: #00f2fe;
+  color: #fff;
+  box-shadow: 0 0 18px rgba(0, 242, 254, 0.4);
+}
+
+/* Dual-Hand Telemetry HUD (Left Screen) */
+.dual-hand-hud {
+  position: absolute;
+  top: 90px;
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 30;
+  width: 250px;
+  pointer-events: none;
+}
+
+.hand-telemetry-card {
+  pointer-events: auto;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(8, 12, 22, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hand-telemetry-card.active {
+  border-color: rgba(0, 242, 254, 0.7);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 242, 254, 0.25);
+}
+
+.hand-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.hand-status-indicator {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hand-status-indicator.detected {
+  color: #10b981;
+}
+
+.hand-status-indicator.searching {
+  color: #94a3b8;
+}
+
+.hand-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.metric-cell {
+  background: rgba(255, 255, 255, 0.03);
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.metric-cell span {
+  color: #00f2fe;
+  font-weight: 600;
+}
+
+/* RIGHT-SIDE HOLOGRAPHIC ARSENAL RACK */
+.holo-arsenal-rack {
+  position: absolute;
+  top: 90px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 30;
+  width: 220px;
+}
+
+.arsenal-header {
+  padding: 8px 12px;
+  background: rgba(8, 12, 22, 0.85);
+  border: 1px solid rgba(0, 242, 254, 0.25);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #00f2fe;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.arsenal-item-card {
+  padding: 10px 14px;
+  background: rgba(8, 12, 22, 0.8);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.arsenal-item-card:hover {
+  background: rgba(14, 20, 36, 0.95);
+  border-color: rgba(0, 242, 254, 0.6);
+  transform: translateX(-4px);
+  box-shadow: 0 4px 20px rgba(0, 242, 254, 0.2);
+}
+
+.arsenal-item-card.active {
+  background: linear-gradient(135deg, rgba(0, 242, 254, 0.2), rgba(99, 102, 241, 0.2));
+  border-color: #00f2fe;
+  box-shadow: 0 0 20px rgba(0, 242, 254, 0.35);
+  transform: translateX(-6px);
+}
+
+.item-icon-box {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(0, 242, 254, 0.1);
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.item-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+
+.item-sub {
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #94a3b8;
+}
+
+/* Floating Camera PIP Window */
+.camera-floating-window-stark {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  width: 250px;
+  background: #080a12;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 242, 254, 0.15);
+  overflow: hidden;
+  z-index: 40;
+}
+
+.camera-floating-window-stark.tracking-active {
+  border-color: #00f2fe;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.8), 0 0 25px rgba(0, 242, 254, 0.35);
+}
+
+.camera-window-header-stark {
+  height: 30px;
+  background: #0e1220;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.camera-title-stark {
+  font-size: 11px;
+  font-weight: 700;
+  color: #00f2fe;
+  letter-spacing: 0.04em;
+}
+
+.camera-webcam-preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+}
+
+.camera-stream {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  opacity: 0.9;
+}
+
+.tracking-canvas-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transform: scaleX(-1);
+  pointer-events: none;
+}
+
+/* Center Hologram Gesture Action HUD */
+.center-interaction-banner {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 24px;
+  background: rgba(8, 12, 22, 0.85);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7), 0 0 25px rgba(0, 242, 254, 0.2);
+  z-index: 30;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.hud-action-tag {
+  background: rgba(0, 242, 254, 0.2);
+  color: #00f2fe;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  border: 1px solid rgba(0, 242, 254, 0.4);
+}
